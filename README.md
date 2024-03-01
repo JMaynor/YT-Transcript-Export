@@ -18,6 +18,9 @@ Require config.json file to run. Example below.
 
 ```json
 {
-
+"database": "videos.db",
+    "channels": [
+        "https://www.youtube.com/{Person}"
+    ]
 }
 ```
