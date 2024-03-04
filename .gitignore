@@ -152,5 +152,7 @@ cython_debug/
 #.idea/
 
 config.json
+temp.txt
 *.srt
 *.db
+.vscode/
