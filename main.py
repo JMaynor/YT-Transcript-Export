@@ -18,9 +18,6 @@ except:
     print("Error reading config file")
     exit(1)
 
-apobj = apprise.Apprise()
-[apobj.add(x) for x in config["apprise_endpoints"] if "apprise_endpoints" in config]
-
 
 class Database:
     def __init__(self, db_name):
@@ -52,18 +49,20 @@ class Database:
         self.conn.close()
 
 
-def error_notify(error_msg: str):
-    """
-    Send apprise notification of error
-    """
-    res = apobj.notify(
-        body=(
-            f"{error_msg}" f'Datetime: {datetime.now().strftime("%m/%d/%Y %H:%M:%S")}'
-        ),
-        title="Transcript Export",
-    )
-    if not res:
-        print("Error, could not send apprise notification")
+class Notifier:
+    def __init__(self, apprise_endpoints):
+        self.apobj = apprise.Apprise()
+        [self.apobj.add(x) for x in apprise_endpoints]
+
+    def notify(self, message):
+        return self.apobj.notify(
+            body=f"{message}"
+            f'Datetime: {datetime.now().strftime("%m/%d/%Y %H:%M:%S")}',
+            title="Transcript Export",
+        )
+
+
+notif = Notifier(config["apprise_endpoints"])
 
 
 def setup_database(db: Database):
@@ -95,6 +94,7 @@ def refresh_channels(db: Database):
             )
         except Exception as e:
             print(f"Error getting channel info for {channel}: {e}")
+            notif.notify(f"Error getting channel info for {channel}: {e}")
             continue
 
         # Add channel to database if not present
@@ -124,7 +124,7 @@ def refresh_videos(db: Database):
             videos = db.select("videos", "id", "channelid = ?", (channel_id,))
         except Exception as e:
             print(f"Error getting videos for {channel_id}: {e}")
-            error_notify(f"Error getting videos for {channel_id}: {e}")
+            notif.notify(f"Error getting videos for {channel_id}: {e}")
             continue
 
         # Create temp txt file with video IDs for yt-dlp to read
@@ -141,7 +141,7 @@ def refresh_videos(db: Database):
                 info_dict = ydl.extract_info(channel_url, download=False)
             except Exception as e:
                 print(f"Error getting video info for {channel_id}: {e}")
-                error_notify(f"Error getting video info for {channel_id}: {e}")
+                notif.notify(f"Error getting video info for {channel_id}: {e}")
                 continue
 
         os.remove("temp.txt")
@@ -164,16 +164,34 @@ def refresh_videos(db: Database):
                         )
                     except Exception as e:
                         print(f"Error adding video to database: {e}")
-                        error_notify(f"Error adding video to database: {e}")
+                        notif.notify(f"Error adding video to database: {e}")
 
 
 def download_transcripts(db: Database):
     """
     Downloads transcripts for all videos in the database if not already present
     Checks 'videos' table for entries with no corresponding entry in 'transcripts' table.
+    Do the equivalent of: yt-dlp --write-auto-sub --skip-download --convert-subs=srt -o "%(id)s.%(ext)s" {VIDEO URL}
+    Store the raw transcript file in the database as a BLOB and text version of it as a string
     """
-    for video in db.query(""):
-        print()
+    ytdl_opts = config["ytdl_options"]
+    ytdl_opts["write_auto_sub"] = True
+    ytdl_opts["skip_download"] = True
+    ytdl_opts["convert_subs"] = "srt"
+
+    for result in db.query(
+        "SELECT id, url FROM videos WHERE id NOT IN (SELECT id FROM transcripts)"
+    ):
+        video_id = result[0]
+        video_url = result[1]
+        ytdl_opts["outtmpl"] = f"{video_id}.%(ext)s"
+        with yt.YoutubeDL(ytdl_opts) as ydl:
+            try:
+                print()
+            except Exception as e:
+                print(f"Error downloading transcript for {video_id}: {e}")
+                notif.notify(f"Error downloading transcript for {video_id}: {e}")
+                continue
 
 
 if __name__ == "__main__":
