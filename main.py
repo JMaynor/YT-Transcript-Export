@@ -5,6 +5,7 @@ Main program
 import json
 import os
 import sqlite3
+from datetime import datetime
 
 import apprise
 import yt_dlp as yt
@@ -49,6 +50,20 @@ class Database:
 
     def close(self):
         self.conn.close()
+
+
+def error_notify(error_msg: str):
+    """
+    Send apprise notification of error
+    """
+    res = apobj.notify(
+        body=(
+            f"{error_msg}" f'Datetime: {datetime.now().strftime("%m/%d/%Y %H:%M:%S")}'
+        ),
+        title="Transcript Export",
+    )
+    if not res:
+        print("Error, could not send apprise notification")
 
 
 def setup_database(db: Database):
@@ -105,7 +120,12 @@ def refresh_videos(db: Database):
         channel_id = channel[0]
         channel_url = channel[1]
         # Get videos already in DB for channel
-        videos = db.select("videos", "id", "channelid = ?", (channel_id,))
+        try:
+            videos = db.select("videos", "id", "channelid = ?", (channel_id,))
+        except Exception as e:
+            print(f"Error getting videos for {channel_id}: {e}")
+            error_notify(f"Error getting videos for {channel_id}: {e}")
+            continue
 
         # Create temp txt file with video IDs for yt-dlp to read
         with open("temp.txt", "w") as f:
@@ -121,30 +141,30 @@ def refresh_videos(db: Database):
                 info_dict = ydl.extract_info(channel_url, download=False)
             except Exception as e:
                 print(f"Error getting video info for {channel_id}: {e}")
+                error_notify(f"Error getting video info for {channel_id}: {e}")
                 continue
 
         os.remove("temp.txt")
 
-        # Get the list of videos from the info dict
-        videos = info_dict["entries"]
-
-        # Add videos to the database if not already present
-        for video in videos:
-            # Add video to database if not present
-            if not db.select("videos", "id", "id = ?", (video["id"],)):
-                try:
-                    db.insert(
-                        "videos",
-                        "id, channelid, title, url",
-                        (
-                            video["id"],
-                            channel_id,
-                            video["title"],
-                            video["webpage_url"],
-                        ),
-                    )
-                except Exception as e:
-                    print(f"Error adding video to database: {e}")
+        if "entries" in info_dict:
+            # Add videos to the database if not already present
+            for video in info_dict["entries"]:
+                # Add video to database if not present
+                if not db.select("videos", "id", "id = ?", (video["id"],)):
+                    try:
+                        db.insert(
+                            "videos",
+                            "id, channelid, title, url",
+                            (
+                                video["id"],
+                                channel_id,
+                                video["title"],
+                                video["webpage_url"],
+                            ),
+                        )
+                    except Exception as e:
+                        print(f"Error adding video to database: {e}")
+                        error_notify(f"Error adding video to database: {e}")
 
 
 def download_transcripts(db: Database):
