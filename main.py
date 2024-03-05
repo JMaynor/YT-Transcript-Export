@@ -78,9 +78,7 @@ def setup_database(db: Database):
     )
 
     # Check if transcripts table exists, if not create it
-    db.create_table(
-        "transcripts", "id TEXT, language TEXT, transcript TEXT, raw_transcript BLOB"
-    )
+    db.create_table("transcripts", "id TEXT, language TEXT, transcript TEXT")
 
 
 def refresh_channels(db: Database):
@@ -177,7 +175,6 @@ def download_transcripts(db: Database):
     ytdl_opts = config["ytdl_options"]
     ytdl_opts["write_auto_sub"] = True
     ytdl_opts["skip_download"] = True
-    ytdl_opts["convert_subs"] = "srt"
 
     for result in db.query(
         "SELECT id, url FROM videos WHERE id NOT IN (SELECT id FROM transcripts)"
@@ -218,9 +215,9 @@ if __name__ == "__main__":
 
     setup_database(db)
 
-    # refresh_channels(db)
+    refresh_channels(db)
 
-    # refresh_videos(db)
+    refresh_videos(db)
 
     download_transcripts(db)
 
