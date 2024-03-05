@@ -6,6 +6,7 @@ import json
 import os
 import sqlite3
 from datetime import datetime
+from pprint import pprint
 
 import apprise
 import yt_dlp as yt
@@ -169,8 +170,8 @@ def download_transcripts(db: Database):
     """
     Downloads transcripts for all videos in the database if not already present
     Checks 'videos' table for entries with no corresponding entry in 'transcripts' table.
-    Need to do the equivalent of: yt-dlp --write-auto-sub --skip-download --convert-subs=srt -o "%(id)s.%(ext)s" {VIDEO URL}
-    Want to store the raw srt transcript file in the database as a BLOB and a text version of it as a string
+    For any that do not have an entry, check for an english transcript and
+    try to donwload it.
     """
     ytdl_opts = config["ytdl_options"]
     ytdl_opts["write_auto_sub"] = True
@@ -189,6 +190,7 @@ def download_transcripts(db: Database):
                     for lang in video_info["automatic_captions"]:
                         if lang != "en":
                             continue
+                        # json3 format is first element in list
                         transcript_url = video_info["automatic_captions"][lang][0][
                             "url"
                         ]
