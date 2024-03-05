@@ -171,8 +171,8 @@ def download_transcripts(db: Database):
     """
     Downloads transcripts for all videos in the database if not already present
     Checks 'videos' table for entries with no corresponding entry in 'transcripts' table.
-    Do the equivalent of: yt-dlp --write-auto-sub --skip-download --convert-subs=srt -o "%(id)s.%(ext)s" {VIDEO URL}
-    Store the raw transcript file in the database as a BLOB and text version of it as a string
+    Need to do the equivalent of: yt-dlp --write-auto-sub --skip-download --convert-subs=srt -o "%(id)s.%(ext)s" {VIDEO URL}
+    Want to store the raw srt transcript file in the database as a BLOB and a text version of it as a string
     """
     ytdl_opts = config["ytdl_options"]
     ytdl_opts["write_auto_sub"] = True
@@ -187,10 +187,25 @@ def download_transcripts(db: Database):
         ytdl_opts["outtmpl"] = f"{video_id}.%(ext)s"
         with yt.YoutubeDL(ytdl_opts) as ydl:
             try:
-                print()
+                video_info = ydl.extract_info(video_url)
+                if "automatic_captions" in video_info:
+                    for lang in video_info["automatic_captions"]:
+                        if lang != "en":
+                            continue
+                        transcript_url = video_info["automatic_captions"][lang][0][
+                            "url"
+                        ]
+                        # Download the data from URL
+                        transcript = ydl.urlopen(transcript_url).read().decode("utf-8")
+                        db.insert(
+                            "transcripts",
+                            "id, language, transcript",
+                            (video_id, lang, transcript),
+                        )
+
             except Exception as e:
-                print(f"Error downloading transcript for {video_id}: {e}")
-                notif.notify(f"Error downloading transcript for {video_id}: {e}")
+                print(f"Error getting transcript for {video_id}: {e}")
+                notif.notify(f"Error getting transcript for {video_id}: {e}")
                 continue
 
 
@@ -203,10 +218,10 @@ if __name__ == "__main__":
 
     setup_database(db)
 
-    refresh_channels(db)
+    # refresh_channels(db)
 
-    refresh_videos(db)
+    # refresh_videos(db)
 
-    # download_transcripts(db)
+    download_transcripts(db)
 
     db.close()
