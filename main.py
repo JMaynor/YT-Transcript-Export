@@ -71,7 +71,7 @@ def setup_database(db: Database):
     Creates tables if not already present
     """
     # Check if channels table exists, if not create it
-    db.create_table("channels", "id TEXT PRIMARY KEY, name TEXT")
+    db.create_table("channels", "id TEXT PRIMARY KEY, name TEXT, url TEXT")
 
     # Check if videos table exists, if not create it
     db.create_table(
