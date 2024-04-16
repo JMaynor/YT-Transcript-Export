@@ -1,2 +1,2 @@
-apprise==1.7.5
+apprise==1.7.6
 yt-dlp==2024.4.9
