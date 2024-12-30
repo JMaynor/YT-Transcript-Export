@@ -1,2 +1,2 @@
-yt-dlp[default]==2024.12.13
+yt-dlp[default]==2024.12.23
 apprise==1.9.1
