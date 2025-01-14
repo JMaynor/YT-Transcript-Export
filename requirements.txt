@@ -1,2 +1,2 @@
 yt-dlp[default]==2025.1.12
-apprise==1.9.1
+apprise==1.9.2
