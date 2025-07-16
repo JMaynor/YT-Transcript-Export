@@ -12,9 +12,16 @@ Then, it checks each transcript and if not already present in the sqlite databas
 
 yt-dlp --write-auto-sub --skip-download --convert-subs=srt -o "%(id)s.%(ext)s" {VIDEO URL}
 
-## Config File
+TODO Fold in searching functionality with exporting. Want to do it all in one application.
 
-Require config.json file to run. Example below.
+## Config
+
+Require `.env` file to run. Example below.
+
+```shell
+YT_DB_PATH=/home/user/transcript_stuff/videos.db
+CHANNEL_LIST=https://www.youtube.com/{Person1},https://www.youtube.com/{Person2}
+```
 
 ```json
 {
