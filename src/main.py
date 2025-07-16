@@ -17,6 +17,14 @@ loaded_env = load_dotenv()
 if not loaded_env:
     raise EnvironmentError("Unable to load env vars from .env")
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler("yt-transcript.log"),
+    ],
+)
 
 class Database:
     """
@@ -82,6 +90,8 @@ def refresh_channels(db: Database):
     """
     Goes through channels in the config file and adds any new channels to the database
     """
+    logger.info("Refreshing channels.")
+
     for channel in os.environ["CHANNEL_LIST"].split(","):
         try:
             channel_info = yt.YoutubeDL({}).extract_info(
@@ -110,73 +120,91 @@ def refresh_channels(db: Database):
 
 def refresh_videos(db: Database):
     """
-    Goes through channels in the config file and adds any new videos to the database
+    Goes through channels in the config file and adds any new videos to the database.
+    This is a two-step process to improve performance:
+    1. Quickly fetch a list of all video IDs from the channel.
+    2. Get detailed information for only the videos that are not already in the DB.
     """
+    logger.info("Refreshing videos.")
+
     # For each channel in database
     channels = db.select("channels", "id, url", "1", ())
     for channel in channels:
         channel_id = channel[0]
         channel_url = channel[1]
-        # Get videos already in DB for channel
+        # Get IDs of videos already in the database for this channel
         try:
             videos = db.select("videos", "id", "channelid = ?", (channel_id,))
+            existing_video_ids = {video[0] for video in videos}
         except Exception as e:
-            logger.error(f"Error getting videos for {channel_id}: {e}")
+            logger.error(f"Error getting existing videos for {channel_id}: {e}")
             continue
 
-        # Create an in-memory archive file
-        archive_buffer = BytesIO()
-        for video in videos:
-            # The archive format is 'extractor_key id', and it needs to be in bytes
-            archive_buffer.write(f"youtube {video[0]}\n".encode("utf-8"))
-        # Rewind the buffer to the beginning before passing it to yt-dlp
-        archive_buffer.seek(0)
+        # Step 1: Get a flat list of all video IDs from the channel (this is fast)
+        try:
+            with yt.YoutubeDL(
+                {"extract_flat": True, "quiet": True, "ignoreerrors": True}
+            ) as ydl:
+                playlist_dict = ydl.extract_info(
+                    channel_url + "/videos", download=False
+                )
+                if not playlist_dict or "entries" not in playlist_dict:
+                    logger.warning(f"Could not retrieve video list for {channel_id}")
+                    continue
+                all_video_ids = {entry["id"] for entry in playlist_dict["entries"]}
+        except Exception as e:
+            logger.error(f"Error getting flat video list for {channel_id}: {e}")
+            continue
 
-        logger.debug(archive_buffer.read())
+        # Step 2: Determine which video IDs are new
+        new_video_ids = all_video_ids - existing_video_ids
 
-        # Download the info for the videos that are not in the download archive
+        if not new_video_ids:
+            logger.info(f"No new videos found for channel {channel_id}")
+            continue
+
+        logger.info(f"Found {len(new_video_ids)} new videos for channel {channel_id}")
+
+        # Step 3: Get full information for only the new videos
+        new_video_urls = [
+            f"https://www.youtube.com/watch?v={id}" for id in new_video_ids
+        ]
+
         with yt.YoutubeDL(
-            params={
+            {
                 "skip_download": True,
-                "extract_flat": False,
-                "flat_playlist": False,
-                "ignoreerrors": True,
                 "quiet": True,
                 "no_warnings": True,
                 "outtmpl": "dummy",
-                "download_archive": archive_buffer,
+                "ignoreerrors": True,
             }
         ) as ydl:
             try:
-                info_dict = ydl.extract_info(
-                    channel_url + "/videos", download=False, process=False
-                )
+                # ydl.extract_info with a list of URLs returns an iterator of video info dicts
+                video_info_iterator = ydl.extract_info(new_video_urls, download=False)
+                if video_info_iterator:
+                    for video in video_info_iterator:
+                        if video and isinstance(video, dict):
+                            try:
+                                db.insert(
+                                    "videos",
+                                    "id, channelid, title, url",
+                                    (
+                                        video.get("id"),
+                                        channel_id,
+                                        video.get("title"),
+                                        video.get("url"),
+                                    ),
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    f"Error adding video {video.get('id')} to database: {e}"
+                                )
             except Exception as e:
-                logger.error(f"Error getting video info for {channel_id}: {e}")
+                logger.error(
+                    f"Error getting video info for new videos in {channel_id}: {e}"
+                )
                 continue
-
-        if not info_dict:
-            # TODO Placeholder, go back and handle more elegantly
-            exit(1)
-
-        if "entries" in info_dict:
-            # Add videos to the database if not already present
-            for video in info_dict["entries"]:
-                # Add video to database if not present
-                if not db.select("videos", "id", "id = ?", (video["id"],)):
-                    try:
-                        db.insert(
-                            "videos",
-                            "id, channelid, title, url",
-                            (
-                                video["id"],
-                                channel_id,
-                                video["title"],
-                                video["url"],
-                            ),
-                        )
-                    except Exception as e:
-                        logger.error(f"Error adding video to database: {e}")
 
 
 def download_transcripts(db: Database):
@@ -187,11 +215,14 @@ def download_transcripts(db: Database):
     try to donwload it.
     """
 
+    logger.info("Downloading transcripts.")
+
     for result in db.query(
         "SELECT id, url FROM videos WHERE id NOT IN (SELECT id FROM transcripts)"
     ):
         video_id = result[0]
         video_url = result[1]
+        logger.info(f"Downloading transcript for video id {video_id}")
         with yt.YoutubeDL(
             params={
                 "skip_download": True,
