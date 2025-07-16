@@ -18,6 +18,11 @@ if not loaded_env:
 
 
 class Database:
+    """
+    The Database class handles connecting to and working with the sqlite db file
+    for this project.
+    """
+
     def __init__(self, db_path: str):
         """
         Connects to specified sqlite DB and creates tables for process if they don't
@@ -30,24 +35,30 @@ class Database:
         self.cursor = self.conn.cursor()
         self.setup_database()
 
-    def create_table(self, table_name, columns):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def create_table(self, table_name: str, columns: str):
         self.cursor.execute(f"CREATE TABLE IF NOT EXISTS {table_name} ({columns})")
         self.conn.commit()
 
-    def insert(self, table_name, columns, values):
+    def insert(self, table_name: str, columns: str, values):
         placeholders = ", ".join("?" * len(values))
         self.cursor.execute(
             f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})", values
         )
         self.conn.commit()
 
-    def select(self, table_name, columns, condition, params):
+    def select(self, table_name: str, columns: str, condition: str, params: tuple):
         self.cursor.execute(
             f"SELECT {columns} FROM {table_name} WHERE {condition}", params
         )
         return self.cursor.fetchall()
 
-    def query(self, query):
+    def query(self, query: str):
         self.cursor.execute(query)
         return self.cursor.fetchall()
 
@@ -131,10 +142,16 @@ def refresh_videos(db: Database):
             }
         ) as ydl:
             try:
-                info_dict = ydl.extract_info(channel_url, download=False)
+                info_dict = ydl.extract_info(
+                    channel_url + "/videos", download=False, process=False
+                )
             except Exception as e:
                 logger.error(f"Error getting video info for {channel_id}: {e}")
                 continue
+
+        if not info_dict:
+            # TODO Placeholder, go back and handle more elegantly
+            exit(1)
 
         if "entries" in info_dict:
             # Add videos to the database if not already present
@@ -149,7 +166,7 @@ def refresh_videos(db: Database):
                                 video["id"],
                                 channel_id,
                                 video["title"],
-                                video["webpage_url"],
+                                video["url"],
                             ),
                         )
                     except Exception as e:
@@ -163,19 +180,30 @@ def download_transcripts(db: Database):
     For any that do not have an entry, check for an english transcript and
     try to donwload it.
     """
-    ytdl_opts = config["ytdl_options"]
-    ytdl_opts["write_auto_sub"] = True
-    ytdl_opts["skip_download"] = True
 
     for result in db.query(
         "SELECT id, url FROM videos WHERE id NOT IN (SELECT id FROM transcripts)"
     ):
         video_id = result[0]
         video_url = result[1]
-        ytdl_opts["outtmpl"] = f"{video_id}.%(ext)s"
-        with yt.YoutubeDL(ytdl_opts) as ydl:
+        with yt.YoutubeDL(
+            params={
+                "skip_download": True,
+                "extract_flat": False,
+                "flat_playlist": False,
+                "ignoreerrors": True,
+                "quiet": True,
+                "no_warnings": True,
+                "outtmpl": "dummy",
+                "write_auto_sub": True,
+            }
+        ) as ydl:
             try:
                 video_info = ydl.extract_info(video_url)
+
+                if not video_info:
+                    exit(1)
+
                 if "automatic_captions" in video_info:
                     for lang in video_info["automatic_captions"]:
                         if lang != "en":
@@ -202,9 +230,7 @@ if __name__ == "__main__":
     Main function
     """
     # Create database object
-    db = Database(os.environ["YT_DB_DIR"])
-
-    refresh_channels(db)
-    refresh_videos(db)
-    download_transcripts(db)
-    db.close()
+    with Database(os.environ["YT_DB_DIR"]) as db:
+        refresh_channels(db)
+        refresh_videos(db)
+        download_transcripts(db)
