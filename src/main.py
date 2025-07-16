@@ -2,29 +2,34 @@
 Main program
 """
 
-import json
-import logging
+import atexit
 import os
 import sqlite3
-from io import BytesIO
 from pathlib import Path
 
 import yt_dlp as yt
 from dotenv import load_dotenv
 
-logger = logging.getLogger(__name__)
+from .logger import AppriseNotifier, error_handler, logger
+
 loaded_env = load_dotenv()
 if not loaded_env:
     raise EnvironmentError("Unable to load env vars from .env")
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler("yt-transcript.log"),
-    ],
-)
+
+@atexit.register
+def send_error_summary():
+    """
+    Send out a summary of any errors that occurred during
+    program run to defined apprise endpoints.
+    """
+    errors = error_handler.get_errors()
+    if errors:
+        error_summary = "\n".join(errors)
+        AppriseNotifier().error_notify(
+            f"Program exited with the following errors:\n{error_summary}"
+        )
+
 
 class Database:
     """
