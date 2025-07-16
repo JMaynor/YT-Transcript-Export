@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import sqlite3
+from io import BytesIO
 from pathlib import Path
 
 import yt_dlp as yt
@@ -123,13 +124,17 @@ def refresh_videos(db: Database):
             logger.error(f"Error getting videos for {channel_id}: {e}")
             continue
 
-        # Create temp txt file with video IDs for yt-dlp to read
-        with open("temp.txt", "w") as f:
-            for video in videos:
-                f.write(f"{video[0]}\n")
+        # Create an in-memory archive file
+        archive_buffer = BytesIO()
+        for video in videos:
+            # The archive format is 'extractor_key id', and it needs to be in bytes
+            archive_buffer.write(f"youtube {video[0]}\n".encode("utf-8"))
+        # Rewind the buffer to the beginning before passing it to yt-dlp
+        archive_buffer.seek(0)
+
+        logger.debug(archive_buffer.read())
 
         # Download the info for the videos that are not in the download archive
-        # TODO Handle download archive to avoid hitting same videos repeatedly
         with yt.YoutubeDL(
             params={
                 "skip_download": True,
@@ -139,6 +144,7 @@ def refresh_videos(db: Database):
                 "quiet": True,
                 "no_warnings": True,
                 "outtmpl": "dummy",
+                "download_archive": archive_buffer,
             }
         ) as ydl:
             try:
